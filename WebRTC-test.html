@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebRTC Test Client</title>
+    <script src="https://cdn.jsdelivr.net/npm/simple-peer@latest/simplepeer.min.js"></script>
+</head>
+<body>
+    <video id="remoteVideo" autoplay playsinline></video><br>
+    <button id="startButton">Start</button>
+    <button id="stopButton">Stop</button>
+
+    <script>
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const remoteVideo = document.getElementById('remoteVideo');
+
+        var peer;
+        let ws;  
+        let stream;
+
+        startButton.onclick = async () => {
+            console.log('startButton clicked');
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                remoteVideo.srcObject = stream;
+                ws = new WebSocket('ws://192.168.0.13:3000');
+
+                ws.onopen = () => {
+                    console.log('Connected to WebSocket');
+
+                    peer = new Peer({ initiator: true, trickle: true, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
+
+                    ws.onmessage = async (event) => { // ws.onmessage is now inside ws.onopen
+                        if (!peer) return;
+
+                        const signal = JSON.parse(event.data);
+                        console.log('Received signal:', signal);
+                        peer.signal(signal);
+                    };
+
+                    peer.on('signal', signal => {
+                        console.log('Sending signal:', signal);
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify(signal));
+                        }
+                    });
+
+
+                    peer.on('connect', () => {
+                        console.log('Peer connected');
+                    });
+
+                    peer.on('track', (track, stream) => {
+                        console.log('Stream received');
+                        remoteVideo.srcObject = stream;
+                    });
+
+                    peer.on('error', err => { console.log('Peer error', err) });
+                    peer.on('data', data => { console.log("data", data) });
+                    peer.on('close', () => { console.log("peer connection closed") });
+
+                    ws.onclose = () => {
+                        console.log("websocket close");
+                        if(peer) {
+                            peer.destroy();
+                        }
+                        peer=null; // prevent errors on stopButton click
+                        ws=null;
+
+                    };
+                    ws.onerror = err => { console.log("websocket error", err) };
+
+
+                };
+
+
+            } catch (err) {
+                console.error("Error accessing media devices:", err);
+            }
+
+        };
+
+        stopButton.onclick = () => {
+            if (peer) {
+                peer.destroy();
+                peer = null;
+            }
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+                remoteVideo.srcObject = null;
+
+            }
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+                ws=null;
+
+            }
+        };
+
+
+
+
+    </script>
+
+</body>
+
+</html>
