@@ -1,7 +1,7 @@
 {
   "name": "webrtcpeer",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -11,7 +11,9 @@
   "devDependencies": {
     "express": "^5.0.0",
     "http": "^0.0.1-security",
+    "node-pre-gyp": "^0.17.0",
     "simple-peer": "^9.11.1",
+    "wrtc": "^0.4.7",
     "ws": "^8.18.0"
   },
   "type": "module"

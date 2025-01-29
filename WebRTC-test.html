@@ -1,109 +1,121 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebRTC Test Client</title>
+    <title>WebRTC Test Page</title>
     <script src="https://cdn.jsdelivr.net/npm/simple-peer@latest/simplepeer.min.js"></script>
 </head>
 <body>
+
+    <video id="localVideo" autoplay muted playsinline></video>
     <video id="remoteVideo" autoplay playsinline></video><br>
     <button id="startButton">Start</button>
     <button id="stopButton">Stop</button>
 
     <script>
-        const startButton = document.getElementById('startButton');
-        const stopButton = document.getElementById('stopButton');
-        const remoteVideo = document.getElementById('remoteVideo');
+      const startButton = document.getElementById('startButton');
+      const stopButton = document.getElementById('stopButton');
+      const localVideo = document.getElementById('localVideo');
+      const remoteVideo = document.getElementById('remoteVideo');
 
-        var peer;
-        let ws;  
-        let stream;
+      let peer;
+      let localStream;
 
-        startButton.onclick = async () => {
-            console.log('startButton clicked');
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      startButton.addEventListener('click', async () => {
+          startButton.disabled=true; // Prevent multiple clicks
+
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .catch(error => {
+                console.error('Error accessing media devices:', error);
+                alert('Error accessing media devices. Please check permissions and try again.');
+                return;
+            });
+
+        localVideo.srcObject = localStream;
+
+        const ws = new WebSocket('ws://192.168.0.13:3000'); // Replace with server address
+
+        ws.onopen = () => {
+            console.log('Connected to signaling server');
+
+
+
+            peer = new Peer({ initiator: true, trickle: true, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
+
+
+            peer.on('signal', signal => {
+                console.log('Sending signal:', signal);
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify(signal));
+                }
+            });
+
+            peer.on('connect', () => {
+                console.log('Connected to peer!');
+            });
+
+            peer.on('track', (track, stream) => {
+                console.log('Received track:', track);
                 remoteVideo.srcObject = stream;
-                ws = new WebSocket('ws://192.168.0.13:3000');
+            });
 
-                ws.onopen = () => {
-                    console.log('Connected to WebSocket');
+            peer.on('error', err => {
+                console.error('Peer error:', err);
+                alert('A peer error occurred');
+            });
 
-                    peer = new Peer({ initiator: true, trickle: true, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
+            ws.onmessage = (event) => {
+                if (!peer) return;
+                const signal = JSON.parse(event.data);
+                console.log('Received signal:', signal);
+                peer.signal(signal);
+            };
 
-                    ws.onmessage = async (event) => { // ws.onmessage is now inside ws.onopen
-                        if (!peer) return;
-
-                        const signal = JSON.parse(event.data);
-                        console.log('Received signal:', signal);
-                        peer.signal(signal);
-                    };
-
-                    peer.on('signal', signal => {
-                        console.log('Sending signal:', signal);
-                        if (ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify(signal));
-                        }
-                    });
-
-
-                    peer.on('connect', () => {
-                        console.log('Peer connected');
-                    });
-
-                    peer.on('track', (track, stream) => {
-                        console.log('Stream received');
-                        remoteVideo.srcObject = stream;
-                    });
-
-                    peer.on('error', err => { console.log('Peer error', err) });
-                    peer.on('data', data => { console.log("data", data) });
-                    peer.on('close', () => { console.log("peer connection closed") });
-
-                    ws.onclose = () => {
-                        console.log("websocket close");
-                        if(peer) {
-                            peer.destroy();
-                        }
-                        peer=null; // prevent errors on stopButton click
-                        ws=null;
-
-                    };
-                    ws.onerror = err => { console.log("websocket error", err) };
-
-
-                };
-
-
-            } catch (err) {
-                console.error("Error accessing media devices:", err);
-            }
-
-        };
-
-        stopButton.onclick = () => {
-            if (peer) {
-                peer.destroy();
+            ws.onclose = () => {
+                console.log("websocket close");
+                if (peer) {
+                    peer.destroy();
+                }
                 peer = null;
-            }
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-                remoteVideo.srcObject = null;
+                ws = null;
+                startButton.disabled=false;
+            };
+            ws.onerror = err => {
+                console.log("websocket error", err);
+                alert('A websocket error occurred');
+            };
 
-            }
 
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.close();
-                ws=null;
 
-            }
         };
 
+      });
+
+
+      stopButton.onclick = () => {
+          if (peer) {
+              peer.destroy();
+              peer = null;
+          }
+
+          if (localStream) {
+              localStream.getTracks().forEach(track => track.stop());
+              localStream = null;
+              localVideo.srcObject = null;
+              remoteVideo.srcObject = null;
+          }
+
+          if(ws && ws.readyState===WebSocket.OPEN){
+              ws.close();
+              ws=null;
+          }
+          startButton.disabled = false;
+
+
+      };
 
 
 
     </script>
 
 </body>
-
 </html>

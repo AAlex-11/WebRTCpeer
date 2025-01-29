@@ -2,6 +2,7 @@ import express from "express";
 import Peer from "simple-peer";
 import { WebSocketServer } from "ws";
 import http from "http";
+import wrtc from "wrtc";
 
 const app = express();
 const port = 3000; // Single port for both HTTP and WebSockets
@@ -34,7 +35,7 @@ wss.on("connection", (ws) => {
       const signal = JSON.parse(message);
 
       if (signal.type === "offer") {
-        peer = new Peer({ initiator: false, trickle: true, config: { iceServers } }); // Use the iceServers here
+        peer = new Peer({ initiator: false, trickle: true, config: { iceServers }, wrtc: wrtc }); // Use the iceServers here
         wrtcPeers[peer._id] = peer; // Store if needed
 
         peer.on("signal", (signalData) => {
@@ -108,6 +109,6 @@ wss.on("connection", (ws) => {
   });
 });
 
-server.listen(port, '0.0.0.0',() => {
+server.listen(port, "0.0.0.0", () => {
   console.log(`Server listening on port ${port}`);
 });
