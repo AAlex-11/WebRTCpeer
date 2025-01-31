@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>WebRTC Test Page</title>
+    <script src="https://cdn.jsdelivr.net/npm/simple-peer@latest/simplepeer.min.js"></script>
+</head>
+
+<body>
+
+    <video id="localVideo" autoplay muted playsinline></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <video id="remoteVideo" autoplay playsinline></video><br>
+    <button id="startButton">Start</button>
+    <button id="stopButton">Stop</button>
+
+    <script>
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let peer;
+        let localStream;
+        let ws;
+        let intervalId;
+
+        startButton.addEventListener('click', async () => {
+            startButton.disabled = true;
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localVideo.srcObject = localStream;
+                ws = new WebSocket('ws://192.168.0.13:3000');
+
+                ws.onopen = () => {
+                    console.log('Connected to signaling server');
+                    peer = new SimplePeer({ initiator: true, trickle: true, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
+
+                    peer.on('signal', signal => {
+                        console.log('Sending signal:', signal);
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify(signal));
+                        }
+                    });
+
+                    peer.on('connect', () => {
+                        console.log('Connected to peer!');
+                        intervalId = setInterval(captureAndSendFrame, 1000); // Send a frame every 1000ms
+                    });
+
+                    peer.on('track', (track, stream) => {
+                        console.log('Received track:', track);
+                        remoteVideo.srcObject = stream;
+                    });
+
+                    peer.on('error', err => {
+                        console.error('Peer error:', err);
+                        alert('A peer error occurred');
+                    });
+
+                    ws.onmessage = (event) => {
+                        if (!peer) return;
+                        const signal = JSON.parse(event.data);
+                        console.log('Received signal:', signal);
+                        peer.signal(signal);
+                    };
+
+                    ws.onclose = () => {
+                        console.log("websocket close");
+                        clearInterval(intervalId);
+                        if (peer) {
+                            peer.destroy();
+                        }
+                        peer = null;
+                        ws = null;
+                        startButton.disabled = false;
+                    };
+                    ws.onerror = err => {
+                        console.log("websocket error", err);
+                        alert('A websocket error occurred');
+                    };
+                };
+            } catch (error) {
+                console.error('Error accessing media devices:', error);
+                alert('Error accessing media devices. Please check permissions and try again.');
+            }
+        });
+
+        stopButton.onclick = () => {
+            clearInterval(intervalId);
+            if (peer) {
+                peer.destroy();
+                peer = null;
+            }
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+                localVideo.srcObject = null;
+                remoteVideo.srcObject = null;
+            }
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+                ws = null;
+            }
+            startButton.disabled = false;
+        };
+
+        function captureAndSendFrame() {
+            if (!localStream) return;
+            canvas.width = localVideo.videoWidth;
+            canvas.height = localVideo.videoHeight;
+            ctx.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
+            const dataURL = canvas.toDataURL('image/jpeg');
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "videoFrame", frame: dataURL }));
+            }
+        }
+    </script>
+
+</body>
+
+</html>
