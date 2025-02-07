@@ -1,13 +1,10 @@
 <!DOCTYPE html>
 <html>
-
 <head>
     <title>WebRTC Test Page</title>
     <script src="https://cdn.jsdelivr.net/npm/simple-peer@latest/simplepeer.min.js"></script>
 </head>
-
 <body>
-
     <video id="localVideo" autoplay muted playsinline></video>
     <video id="remoteVideo" autoplay playsinline></video><br>
     <button id="startButton">Start</button>
@@ -22,140 +19,99 @@
         let peer;
         let localStream;
         let ws;
+        const iceCandidateQueue = [];
+        let connectionEstablished = false;
 
         startButton.addEventListener('click', async () => {
-            startButton.disabled = true; // Prevent multiple clicks
+            startButton.disabled = true;
 
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-                .catch(error => {
-                    console.error('Error accessing media devices:', error);
-                    alert('Error accessing media devices. Please check permissions and try again.');
-                    return;
-                });
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localVideo.srcObject = localStream;
 
-            localVideo.srcObject = localStream;
+                ws = new WebSocket('ws://192.168.0.13:3000');
 
-            ws = new WebSocket('ws://192.168.0.13:3000');
+                ws.onopen = () => {
+                    console.log('Connected to signaling server');
+                    peer = new SimplePeer({
+                        initiator: true,
+                        trickle: true,
+                        config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+                    });
 
-            ws.onopen = () => {
-                console.log('Connected to signaling server');
-                peer = new SimplePeer({ initiator: true, trickle: true, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
+                    console.log("Peer object created:", peer);
+                    console.log("Peer initiator:", peer.initiator);
+                    console.log("Peer trickle:", peer.trickle);
+                    console.log("Peer config:", peer.config);
 
-                console.log("Peer object created:", peer);
-                console.log("Peer ID:", peer._id);
-                console.log("Peer initiator:", peer.initiator);
-                console.log("Peer trickle:", peer.trickle);
-                console.log("Peer config:", peer.config);
+                    localStream.getTracks().forEach(track => {
+                        console.log('Adding track:', track);
+                        peer.addTrack(track, localStream);
+                    });
 
-                peer.on('signal', signal => {
-                    console.log('Sending signal:', signal);
-                    console.log('Signal type:', signal.type);
-                    console.log('Signal sdp:', signal.sdp);
-                    if (signal.candidate) {
-                        console.log('Candidate:', signal.candidate);
-                        console.log('Candidate candidate:', signal.candidate.candidate);
-                        console.log('Candidate sdpMLineIndex:', signal.candidate.sdpMLineIndex);
-                        console.log('Candidate sdpMid:', signal.candidate.sdpMid);
-                        console.log('Candidate usernameFragment:', signal.candidate.usernameFragment);
-                        console.log('Candidate relatedAddress:', signal.candidate.relatedAddress);
-                        console.log('Candidate relatedPort:', signal.candidate.relatedPort);
-                        console.log('Candidate foundation:', signal.candidate.foundation);
-                        console.log('Candidate priority:', signal.candidate.priority);
-                        console.log('Candidate ip:', signal.candidate.ip);
-                        console.log('Candidate protocol:', signal.candidate.protocol);
-                        console.log('Candidate port:', signal.candidate.port);
-                        console.log('Candidate tcpType:', signal.candidate.tcpType);
-                        console.log('Candidate component:', signal.candidate.component);
-                    }
-                    if (ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify(signal));
-                    }
-                });
+                    peer.on('signal', signal => {
+                        console.log('Sending signal:', signal);
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify(signal));
+                        }
+                    });
 
-                peer.on('connect', () => {
-                    console.log('Connected to peer!');
-                    console.log('Peer connection state:', peer.connection);
-                    console.log('Peer bufferedAmount:', peer.bufferedAmount);
-                    console.log('Peer remoteAddress:', peer.remoteAddress);
-                    console.log('Peer remoteFamily:', peer.remoteFamily);
-                    console.log('Peer remotePort:', peer.remotePort);
-                    console.log('Peer destroyed:', peer.destroyed);
-                    console.log('Peer initiator:', peer.initiator);
-                    console.log('Peer trickle:', peer.trickleICE);
-                });
+                    peer.on('connect', () => {
+                        console.log('Connected to peer!');
+                        connectionEstablished = true;
 
-                peer.on('track', (track, stream) => {
-                    console.log('Received track:', track);
-                    remoteVideo.srcObject = stream;
-                    const videoTrack = stream.getVideoTracks()[0];
-                    if (videoTrack) {
-                        console.log('Video Track:', videoTrack);
-                        console.log('Video Track Kind:', videoTrack.kind);
-                        console.log('Video Track ID:', videoTrack.id);
-                        console.log('Video Track Label:', videoTrack.label);
-                        console.log('Video Track Enabled:', videoTrack.enabled);
-                        console.log('Video Track ReadyState:', videoTrack.readyState);
-                        console.log('Video Track Settings:', videoTrack.getSettings());
-                        console.log('Video Track Capabilities:', videoTrack.getCapabilities());
-                        console.log('Video Track Constraints:', videoTrack.getConstraints());
-                        console.log('MediaStream ID:', stream.id);
-                        console.log('MediaStream Tracks:', stream.getTracks());
+                        while (iceCandidateQueue.length) {
+                            const candidate = iceCandidateQueue.shift();
+                            peer.signal(candidate);
+                        }
+                    });
 
-                        const reader = videoTrack.getReader();
-                        let sendVideo = async () => {
-                            try {
-                                const { done, value } = await reader.read();
-                                if (!done) {
-                                    // Log information about the frame BEFORE sending:
-                                    console.log('Sending video frame:', {
-                                        frameSize: value.size,
-                                        frameType: typeof value,
-                                        timestamp: value.timestamp,
-                                        width: value.width,
-                                        height: value.height,
-                                    });
+                    peer.on('track', (track, stream) => {
+                        console.log('Received track:', track);
+                        if (remoteVideo.srcObject !== stream) {
+                            remoteVideo.srcObject = stream;
+                            console.log('Remote stream set:', stream);
+                        }
+                    });
 
-                                    ws.send(JSON.stringify({ type: "videoFrame", frame: value }));
-                                    sendVideo();
-                                } else {
-                                    console.log('End of video stream');
-                                }
-                            } catch (error) {
-                                console.error('Error reading/sending video:', error);
+                    peer.on('error', err => {
+                        console.error('Peer error:', err);
+                    });
+
+                    ws.onmessage = (event) => {
+                        if (!peer) return;
+                        const signal = JSON.parse(event.data);
+                        console.log('Received signal:', signal);
+
+                        if (signal.type === 'offer' || signal.type === 'answer') {
+                            peer.signal(signal);
+                        } else if (signal.candidate) {
+                            if (connectionEstablished) {
+                                peer.signal(signal);
+                            } else {
+                                iceCandidateQueue.push(signal);
                             }
-                        };
-                        sendVideo();
-                    }
-                });
+                        }
+                    };
 
-                peer.on('error', err => {
-                    console.error('Peer error:', err);
-                    alert('A peer error occurred');
-                });
+                    ws.onclose = () => {
+                        console.log("WebSocket closed");
+                        if (peer) peer.destroy();
+                        peer = null;
+                        ws = null;
+                        startButton.disabled = false;
+                    };
 
-                ws.onmessage = (event) => {
-                    if (!peer) return;
-                    const signal = JSON.parse(event.data);
-                    console.log('Received signal:', signal);
-                    peer.signal(signal);
+                    ws.onerror = err => {
+                        console.log("WebSocket error", err);
+                    };
                 };
 
-                ws.onclose = () => {
-                    console.log("websocket close");
-                    if (peer) {
-                        peer.destroy();
-                    }
-                    peer = null;
-                    ws = null;
-                    startButton.disabled = false;
-                };
-                ws.onerror = err => {
-                    console.log("websocket error", err);
-                    alert('A websocket error occurred');
-                };
-            };
+            } catch (error) {
+                console.error('Error accessing media devices:', error);
+                alert('Error accessing media devices. Please check permissions and try again.');
+            }
         });
-
 
         stopButton.onclick = () => {
             if (peer) {
@@ -174,15 +130,9 @@
                 ws.close();
                 ws = null;
             }
+
             startButton.disabled = false;
-
-
         };
-
-
-
     </script>
-
 </body>
-
 </html>
